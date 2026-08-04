@@ -93,14 +93,23 @@ func (helmChartPuller) Pull(source v1alpha1.ApplicationSource, creds *RepoCreds,
 		actionConfig.RegistryClient = registryClient
 		pull.SetRegistryClient(registryClient)
 
+		host := ociRegistryHost(source.RepoURL)
 		if repo.Username != "" && repo.Password != "" {
-			host := ociRegistryHost(source.RepoURL)
 			log.Debug().Str("registry", host).Msg("Logging in to OCI registry to pull chart")
 			if err := registryClient.Login(host,
 				registry.LoginOptBasicAuth(repo.Username, repo.Password),
 			); err != nil {
 				return "", fmt.Errorf("failed to log in to OCI registry %s: %w", host, err)
 			}
+		} else {
+			// Anonymous pull is legitimate for public registries, but on a
+			// private one it surfaces far away as "basic credential not found"
+			// from the registry client, with nothing pointing back at the
+			// credential lookup. Say so here instead.
+			log.Warn().
+				Str("registry", host).
+				Str("repoURL", source.RepoURL).
+				Msg("⚠️ No credentials found for OCI registry — pulling anonymously")
 		}
 		chartRef = ociChartRef(source.RepoURL, source.Chart)
 	} else {
