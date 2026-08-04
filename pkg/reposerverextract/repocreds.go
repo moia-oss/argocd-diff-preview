@@ -213,9 +213,51 @@ func (rc *RepoCreds) GetRepo(repoURL string) *v1alpha1.Repository {
 	if r, ok := rc.reposByURL[normalizeRepoURL(repoURL)]; ok {
 		return r
 	}
+	// Fall back to the Helm/OCI credential TEMPLATES. reposByURL is built from
+	// ListRepositories and GetRepository, and neither inherits from a template
+	// registered for a Helm or OCI registry: such secrets carry type "helm"
+	// (with enableOCI) and are returned only by GetAllHelmRepositoryCredentials.
+	// So a registry whose credentials come purely from a repo-creds secret —
+	// the normal setup for ECR, GAR and friends — resolved to an empty stub and
+	// the chart was pulled anonymously.
+	if c := rc.matchCredTemplate(repoURL); c != nil {
+		return &v1alpha1.Repository{
+			Repo:              repoURL,
+			Username:          c.Username,
+			Password:          c.Password,
+			BearerToken:       c.BearerToken,
+			TLSClientCertData: c.TLSClientCertData,
+			TLSClientCertKey:  c.TLSClientCertKey,
+			EnableOCI:         c.EnableOCI,
+			InheritedCreds:    true,
+		}
+	}
 	// URL not found in the registry - return a bare stub.
 	// This is correct for public repositories that don't need credentials.
 	return &v1alpha1.Repository{Repo: repoURL}
+}
+
+// matchCredTemplate returns the credential template whose URL is the longest
+// prefix of repoURL, mirroring how Argo CD picks among overlapping templates.
+func (rc *RepoCreds) matchCredTemplate(repoURL string) *v1alpha1.RepoCreds {
+	key := normalizeRepoURL(repoURL)
+	var best *v1alpha1.RepoCreds
+	bestLen := -1
+	for _, list := range [][]*v1alpha1.RepoCreds{rc.helmRepoCreds, rc.ociRepoCreds} {
+		for _, c := range list {
+			if c == nil {
+				continue
+			}
+			p := normalizeRepoURL(c.URL)
+			if p == "" || !strings.HasPrefix(key, p) {
+				continue
+			}
+			if len(p) > bestLen {
+				best, bestLen = c, len(p)
+			}
+		}
+	}
+	return best
 }
 
 // normalizeRepoURL returns a canonical form of a repository URL used for

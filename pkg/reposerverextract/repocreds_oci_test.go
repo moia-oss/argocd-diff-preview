@@ -41,3 +41,39 @@ func TestNormalizeRepoURLStripsScheme(t *testing.T) {
 		t.Fatalf("git URL handling changed: %q", got)
 	}
 }
+
+// The real-world ECR setup: no "repository" secret at all, only a repo-creds
+// template registered for the bare registry host with type helm + enableOCI.
+// reposByURL stays empty, so the chart pull must fall back to the template.
+func TestGetRepoFallsBackToHelmCredTemplate(t *testing.T) {
+	rc := &RepoCreds{
+		reposByURL: map[string]*v1alpha1.Repository{},
+		helmRepoCreds: []*v1alpha1.RepoCreds{
+			{URL: "682033484092.dkr.ecr.eu-central-1.amazonaws.com", Username: "AWS", Password: "tok", EnableOCI: true},
+		},
+	}
+	got := rc.GetRepo("oci://682033484092.dkr.ecr.eu-central-1.amazonaws.com/moia/platform-engineering-infra")
+	if got.Username != "AWS" || got.Password != "tok" {
+		t.Fatalf("template not applied: %+v", got)
+	}
+	if !got.EnableOCI {
+		t.Errorf("EnableOCI not carried over")
+	}
+	if u := rc.GetRepo("ghcr.io/someone/else"); u.Username != "" {
+		t.Errorf("unrelated registry must not inherit: %+v", u)
+	}
+}
+
+// Overlapping templates: the most specific prefix wins, as in Argo CD.
+func TestCredTemplateLongestPrefixWins(t *testing.T) {
+	rc := &RepoCreds{
+		reposByURL: map[string]*v1alpha1.Repository{},
+		helmRepoCreds: []*v1alpha1.RepoCreds{
+			{URL: "reg.example.com", Username: "broad"},
+			{URL: "reg.example.com/team/charts", Username: "narrow"},
+		},
+	}
+	if got := rc.GetRepo("reg.example.com/team/charts/app"); got.Username != "narrow" {
+		t.Fatalf("expected the longer prefix to win, got %q", got.Username)
+	}
+}
