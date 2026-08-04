@@ -163,6 +163,17 @@ func FetchRepoCreds(ctx context.Context, k8sClient *k8s.Client, namespace string
 				Msg("⚠️ Failed to look up repository credentials for app repo URL")
 			continue
 		}
+		// GetRepository inherits credentials by PREFIX. A Helm credential
+		// template registered for "ghcr.io/org" is not a prefix of
+		// "oci://ghcr.io/org", so an OCI source finds nothing on the first
+		// attempt. Retry without the scheme, which is how such templates are
+		// stored (repo-creds secrets carry type "helm" + enableOCI).
+		if !repo.HasCredentials() && strings.HasPrefix(strings.ToLower(rawURL), "oci://") {
+			bare := rawURL[len("oci://"):]
+			if r2, err2 := argoDB.GetRepository(ctx, bare, ""); err2 == nil && r2.HasCredentials() {
+				repo = r2
+			}
+		}
 		if repo.HasCredentials() {
 			reposByURL[key] = repo
 			repoCredTemplates++
@@ -217,7 +228,13 @@ func (rc *RepoCreds) GetRepo(repoURL string) *v1alpha1.Repository {
 //
 // both normalise to the same key.
 func normalizeRepoURL(u string) string {
-	u = strings.ToLower(u)
+	u = strings.ToLower(strings.TrimSpace(u))
+	// Drop the oci:// scheme. Argo CD stores a Helm credential template for an
+	// OCI registry under the bare host ("ghcr.io/org"), while an Application's
+	// source may carry the scheme ("oci://ghcr.io/org"). Keying on the raw
+	// string put the two in different buckets, so the credential was never
+	// found and the chart pull fell back to anonymous access.
+	u = strings.TrimPrefix(u, "oci://")
 	u = strings.TrimSuffix(u, ".git")
 	return u
 }
