@@ -208,6 +208,7 @@ func run(cfg *Config) error {
 		cfg.RenderMethod,
 		cfg.ArgocdAuthToken,
 		cfg.ArgocdConfigPath,
+		cfg.RepoServerAddress,
 	)
 
 	// Ensure cleanup is performed when we exit (e.g., stopping port forwards)
@@ -216,7 +217,7 @@ func run(cfg *Config) error {
 	var argocdInstallationDuration time.Duration
 	if cfg.CreateCluster {
 		// Install Argo CD
-		duration, err := argocd.Install(cfg.Debug, cfg.SecretsFolder)
+		duration, err := argocd.Install(cfg.Debug, cfg.PreinstallFolder, cfg.SecretsFolder)
 		if err != nil {
 			log.Error().Msgf("❌ Failed to install Argo CD")
 			return err
@@ -363,6 +364,11 @@ func run(cfg *Config) error {
 	if err != nil {
 		log.Error().Msg("❌ Failed to extract resources")
 		return err
+	}
+
+	if !cfg.IncludeHelmHooks {
+		baseManifests = extract.RemoveHelmHooks(baseManifests)
+		targetManifests = extract.RemoveHelmHooks(targetManifests)
 	}
 
 	// Create info box for storing run time information
